@@ -39,7 +39,9 @@ jobs:
           unzip -q -o nopecha.zip -d scripts/extensions/nopecha/unpacked
           echo "插件准备就绪！"
 
-      - name: 后台启动 VMess 代理服务 (sing-box)
+           - name: 后台启动代理服务 (sing-box 动态解析 NODE_LINK)
+        env:
+          NODE_LINK: ${{ secrets.NODE_LINK }}
         run: |
           echo "下载 sing-box 客户端..."
           curl -Lo sing-box.tar.gz https://github.com/SagerNet/sing-box/releases/download/v1.13.19/sing-box-1.13.19-linux-amd64.tar.gz
@@ -47,51 +49,10 @@ jobs:
           mv sing-box-1.13.19-linux-amd64/sing-box ./sing-box
           chmod +x ./sing-box
 
-          echo "生成 VMess 节点配置文件 (DE-Datalix-1)..."
-          cat << 'EOF' > config.json
-          {
-            "log": {
-              "level": "warn"
-            },
-            "inbounds": [
-              {
-                "type": "mixed",
-                "tag": "mixed-in",
-                "listen": "127.0.0.1",
-                "listen_port": 7890
-              }
-            ],
-            "outbounds": [
-              {
-                "type": "vmess",
-                "tag": "proxy-out",
-                "server": "cdns.doon.eu.org",
-                "server_port": 443,
-                "uuid": "97d95c14-248b-4d05-a43f-a9d203493484",
-                "security": "auto",
-                "alter_id": 0,
-                "tls": {
-                  "enabled": true,
-                  "server_name": "membrane-turtle-cdt-babies.trycloudflare.com",
-                  "insecure": false,
-                  "utls": {
-                    "enabled": true,
-                    "fingerprint": "firefox"
-                  }
-                },
-                "transport": {
-                  "type": "ws",
-                  "path": "/vmess-argo",
-                  "headers": {
-                    "Host": "membrane-turtle-cdt-babies.trycloudflare.com"
-                  }
-                }
-              }
-            ]
-          }
-          EOF
+          echo "动态解析节点配置 (支持 vmess/vless/tuic/hy2/trojan)..."
+          python setup_proxy.py
 
-          echo "后台运行..."
+          echo "后台运行 sing-box..."
           ./sing-box run -c config.json &
           sleep 4
           PROXY_IP=$(curl -s --max-time 10 -x http://127.0.0.1:7890 https://api.ipify.org || echo "")
