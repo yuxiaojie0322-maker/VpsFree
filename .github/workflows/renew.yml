@@ -39,7 +39,7 @@ jobs:
           unzip -q -o nopecha.zip -d scripts/extensions/nopecha/unpacked
           echo "插件准备就绪！"
 
-      - name: 后台启动 Hysteria 2 代理服务 (sing-box)
+      - name: 后台启动 VMess 代理服务 (sing-box)
         run: |
           echo "下载 sing-box 客户端..."
           curl -Lo sing-box.tar.gz https://github.com/SagerNet/sing-box/releases/download/v1.13.19/sing-box-1.13.19-linux-amd64.tar.gz
@@ -47,7 +47,7 @@ jobs:
           mv sing-box-1.13.19-linux-amd64/sing-box ./sing-box
           chmod +x ./sing-box
 
-          echo "生成 Hysteria 2 节点配置文件..."
+          echo "生成 VMess 节点配置文件..."
           cat << 'EOF' > config.json
           {
             "log": {
@@ -63,18 +63,24 @@ jobs:
             ],
             "outbounds": [
               {
-                "type": "hysteria2",
-                "tag": "hy2-out",
-                "server": "83.168.94.238",
-                "server_port": 30005,
-                "password": "031e1b07-ac55-476d-a415-4b3c5fc411f5",
+                "type": "vmess",
+                "tag": "proxy-out",
+                "server": "hk.cf.090227.xyz",
+                "server_port": 443,
+                "uuid": "fa14157a-c63e-4551-85b7-60173a379df9",
+                "security": "auto",
+                "alter_id": 0,
                 "tls": {
                   "enabled": true,
-                  "server_name": "www.bing.com",
-                  "insecure": true,
-                  "alpn": [
-                    "h3"
-                  ]
+                  "server_name": "anikbothosting.blibli.kdns.fr",
+                  "insecure": false
+                },
+                "transport": {
+                  "type": "ws",
+                  "path": "/vmess-argo",
+                  "headers": {
+                    "Host": "anikbothosting.blibli.kdns.fr"
+                  }
                 }
               }
             ]
