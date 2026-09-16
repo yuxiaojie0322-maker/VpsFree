@@ -38,8 +38,7 @@ jobs:
           curl -fLo nopecha.zip https://github.com/NopeCHALLC/nopecha-extension/releases/latest/download/chromium.zip
           unzip -q -o nopecha.zip -d scripts/extensions/nopecha/unpacked
           echo "插件准备就绪！"
-
-           - name: 后台启动 TUIC 代理服务 (sing-box)
+      - name: 后台启动 TUIC 代理服务 (sing-box)
         run: |
           echo "下载 sing-box 客户端..."
           curl -Lo sing-box.tar.gz https://github.com/SagerNet/sing-box/releases/download/v1.13.19/sing-box-1.13.19-linux-amd64.tar.gz
