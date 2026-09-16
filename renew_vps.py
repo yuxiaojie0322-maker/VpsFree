@@ -7,6 +7,7 @@ VPSFree.es 免费面板自动续期脚本 (多账号批量续期版 - 登录无�
 """
 
 import os
+import random
 import re
 import sys
 import time
@@ -434,6 +435,27 @@ def process_single_account(p, email, password, acc_index, total_accs):
             page = browser.pages[0] if browser.pages else browser.new_page()
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
 
+            # 路由过滤：拦截无关的字体、音视频与外部追踪统计，大幅减轻源站与代理负担
+            def route_interceptor(route):
+                try:
+                    req_type = route.request.resource_type
+                    req_url = route.request.url.lower()
+                    if req_type in ["font", "media"]:
+                        return route.abort()
+                    if any(bad in req_url for bad in ["google-analytics", "googletagmanager", "clarity.ms", "doubleclick", "facebook.net"]):
+                        return route.abort()
+                    return route.continue_()
+                except Exception:
+                    try:
+                        route.continue_()
+                    except Exception:
+                        pass
+
+            try:
+                page.route("**/*", route_interceptor)
+            except Exception:
+                pass
+
             # 1. 激活 NopeCHA（插件模式，仅当插件加载成功时）
             if ext_ok and NOPECHA_KEY:
                 try:
@@ -465,7 +487,18 @@ def process_single_account(p, email, password, acc_index, total_accs):
                     page.screenshot(path=f"goto_timeout_{acc_index}.png")
                 except Exception:
                     pass
-            time.sleep(4)
+            time.sleep(3)
+
+            # 检测是否遭遇源站宕机 (Cloudflare 520/521/522/523/524/502/504)
+            try:
+                page_text = page.evaluate("() => document.body ? document.body.innerText : ''")
+                if any(err_sig in page_text for err_sig in ["Error code 524", "Error code 522", "Error code 520", "Error code 521", "Error code 523", "Host Error", "Web server is down"]):
+                    log(f"[{email}] ⚠️ 检测到 Cloudflare 源站异常/超时，源站高负载，等待 15s 后重新刷新...", "WARN")
+                    time.sleep(15)
+                    page.reload(wait_until="commit", timeout=60000)
+                    time.sleep(3)
+            except Exception:
+                pass
 
             # 2.5 等待并自动穿透 Cloudflare challenge / Turnstile（最多 45s）
             log(f"[{email}] [第 {attempt} 次] 检测并等待 Cloudflare challenge / Turnstile 通过...")
@@ -594,44 +627,64 @@ def process_single_account(p, email, password, acc_index, total_accs):
 
             time.sleep(2)
 
-            # 5. 重新确认账号密码（防止被清空）
+            # 5. 极速复核账号密码并确保填入（使用 JS evaluate，耗时 <10ms，彻底避免 Playwright locator 30s 阻塞）
             try:
-                if not email_input.input_value():
-                    email_input.fill(email)
-                if not pass_input.input_value():
-                    pass_input.fill(password)
+                page.evaluate("""({u, p}) => {
+                    const mail = document.querySelector("input[name='mail'], input[type='email'], input[name='email'], input[name='username'], #emailaddress");
+                    const pwd = document.querySelector("input[name='pwd'], input[type='password'], input[name='password'], #password");
+                    if (mail && (!mail.value || mail.value.trim() === '')) mail.value = u;
+                    if (pwd && (!pwd.value || pwd.value.trim() === '')) pwd.value = p;
+                }""", {"u": email, "p": password})
             except Exception:
                 pass
 
-            # 点击提交按钮
+            # 6. 秒级触发提交表单（先通过 JS 触发 click/submit，再用 Playwright 兜底，防止 hCaptcha token 2分钟过期）
             submit_clicked = False
-            for selector in [
-                "button.btn-primary",
-                "button[type='submit']",
-                "input[type='submit']",
-                "button:has-text('Sign In')",
-                "button:has-text('Sign in')",
-                "button:has-text('Login')",
-                "button:has-text('Log In')",
-                "button:has-text('Se connecter')",
-                "button:has-text('Connexion')",
-                "button:has-text('Entrer')",
-                "button:has-text('Valider')",
-                "button:has-text('Submit')",
-                "form button",
-            ]:
-                try:
-                    btn = page.locator(selector).first
-                    if btn.is_visible(timeout=1500):
-                        btn.click(force=True, timeout=5000)
-                        log(f"[{email}] 点击提交按钮: {selector}", "INFO")
-                        submit_clicked = True
-                        break
-                except Exception:
-                    continue
+            try:
+                # 优先直接在网页 DOM 中触发按钮点击或 form.submit
+                res = page.evaluate("""() => {
+                    const btns = Array.from(document.querySelectorAll("button, input[type='submit']"));
+                    for (const b of btns) {
+                        const txt = (b.innerText || b.value || '').trim().toLowerCase();
+                        if (txt.includes('sign in') || txt.includes('login') || txt.includes('connexion') || txt.includes('se connecter') || b.type === 'submit') {
+                            b.click();
+                            return { clicked: true, method: 'btn.click', text: txt };
+                        }
+                    }
+                    const form = document.querySelector("form");
+                    if (form) {
+                        form.submit();
+                        return { clicked: true, method: 'form.submit' };
+                    }
+                    return { clicked: false };
+                }""")
+                if res and res.get("clicked"):
+                    submit_clicked = True
+                    log(f"[{email}] ⚡ 极速提交表单成功 ({res.get('method', 'dom')}) ✅")
+            except Exception as e:
+                log(f"[{email}] JS 提交异常: {e}", "WARN")
 
             if not submit_clicked:
-                log(f"[{email}] 未找到提交按钮，按回车提交", "WARN")
+                for selector in [
+                    "button[type='submit']",
+                    "button:has-text('Sign In')",
+                    "button:has-text('Sign in')",
+                    "button.btn-primary",
+                    "button:has-text('Login')",
+                    "form button",
+                ]:
+                    try:
+                        btn = page.locator(selector).first
+                        if btn.count() > 0:
+                            btn.click(force=True, timeout=2500)
+                            log(f"[{email}] 点击提交按钮: {selector}", "INFO")
+                            submit_clicked = True
+                            break
+                    except Exception:
+                        continue
+
+            if not submit_clicked:
+                log(f"[{email}] 模拟回车提交", "WARN")
                 try:
                     page.keyboard.press("Enter")
                 except Exception as e:
@@ -869,8 +922,9 @@ def main():
                 fail_count += 1
                 log(f"[{acc['email']}] 主流程异常: {e}", "ERROR")
             if idx < total:
-                log("等待 5 秒后处理下一个账号...")
-                time.sleep(5)
+                cool_down = random.randint(25, 40)
+                log(f"等待 {cool_down} 秒（冷却防同IP撞库风控）后处理下一个账号...")
+                time.sleep(cool_down)
 
     log("🎉 所有账号处理完毕！")
     # 汇总报告
