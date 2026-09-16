@@ -38,8 +38,7 @@ jobs:
           curl -fLo nopecha.zip https://github.com/NopeCHALLC/nopecha-extension/releases/latest/download/chromium.zip
           unzip -q -o nopecha.zip -d scripts/extensions/nopecha/unpacked
           echo "插件准备就绪！"
-
-           - name: 后台启动代理服务 (sing-box 动态解析 NODE_LINK)
+      - name: 后台启动代理服务 (sing-box 动态解析 NODE_LINK)
         env:
           NODE_LINK: ${{ secrets.NODE_LINK }}
         run: |
