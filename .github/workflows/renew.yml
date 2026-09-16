@@ -39,7 +39,7 @@ jobs:
           unzip -q -o nopecha.zip -d scripts/extensions/nopecha/unpacked
           echo "插件准备就绪！"
 
-      - name: 后台启动 VMess 代理服务 (sing-box)
+      - name: 后台启动 VLESS 代理服务 (sing-box)
         run: |
           echo "下载 sing-box 客户端..."
           curl -Lo sing-box.tar.gz https://github.com/SagerNet/sing-box/releases/download/v1.13.19/sing-box-1.13.19-linux-amd64.tar.gz
@@ -47,7 +47,7 @@ jobs:
           mv sing-box-1.13.19-linux-amd64/sing-box ./sing-box
           chmod +x ./sing-box
 
-          echo "生成 VMess 节点配置文件..."
+          echo "生成 VLESS 节点配置文件 (CF-Snippets-VLESS)..."
           cat << 'EOF' > config.json
           {
             "log": {
@@ -63,23 +63,21 @@ jobs:
             ],
             "outbounds": [
               {
-                "type": "vmess",
+                "type": "vless",
                 "tag": "proxy-out",
-                "server": "hk.cf.090227.xyz",
+                "server": "spring.io",
                 "server_port": 443,
-                "uuid": "fa14157a-c63e-4551-85b7-60173a379df9",
-                "security": "auto",
-                "alter_id": 0,
+                "uuid": "69e9fab8-8ea9-415b-83fd-40f1e37e29f7",
                 "tls": {
                   "enabled": true,
-                  "server_name": "anikbothosting.blibli.kdns.fr",
+                  "server_name": "snippets.blibli.kdns.fr",
                   "insecure": false
                 },
                 "transport": {
                   "type": "ws",
-                  "path": "/vmess-argo",
+                  "path": "/",
                   "headers": {
-                    "Host": "anikbothosting.blibli.kdns.fr"
+                    "Host": "snippets.blibli.kdns.fr"
                   }
                 }
               }
