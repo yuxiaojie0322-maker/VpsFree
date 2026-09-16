@@ -626,8 +626,8 @@ def process_single_account(p, email, password, acc_index, total_accs):
                 log(f"[{email}] ⚠️ 验证码识别超时，准备尝试直接提交...", "WARN")
 
             # 验证码识别完后拉长缓冲等待时间，确保 NopeCHA 动画结束、hCaptcha 回调彻底触发并将 Token 稳定写入表单
-            wait_after_captcha = 6
-            log(f"[{email}] ⏳ 验证码识别成功，缓冲等待 {wait_after_captcha} 秒确保 Token 写入与回调就绪...")
+            wait_after_captcha = 10
+            log(f"[{email}] ⏳ 验证码识别成功，缓冲等待 {wait_after_captcha} 秒确保 Token 彻底稳定写入...")
             time.sleep(wait_after_captcha)
 
             # 5. 极速复核账号密码并确保填入（使用 JS evaluate，耗时 <10ms，彻底避免 Playwright locator 30s 阻塞）
@@ -693,10 +693,10 @@ def process_single_account(p, email, password, acc_index, total_accs):
                 except Exception as e:
                     log(f"[{email}] 回车异常: {e}", "WARN")
 
-            # 动态等待离开登录页面（拉长至 40 秒，避免慢速网络/代理或后端验证耗时导致过早判定失败）
-            log(f"[{email}] 等待登录完成跳转（最长 40 秒）...")
+            # 动态等待离开登录页面（拉长至 60 秒，避免慢速网络/代理或后端验证耗时导致过早判定失败）
+            log(f"[{email}] 等待登录完成跳转（最长 60 秒）...")
             login_redirected = False
-            for wait_sec in range(40):
+            for wait_sec in range(60):
                 time.sleep(1)
                 cur_u = page.url.lower()
                 if "connexion" not in cur_u and "login" not in cur_u:
