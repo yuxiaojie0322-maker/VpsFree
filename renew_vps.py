@@ -345,26 +345,39 @@ def navigate_to_server_page(page, email):
                 except Exception:
                     continue
 
-    # 6. 如果仍然未进入，尝试直接跳转到常见实例列表路径
-    if not is_on_server_detail_page(page):
-        for direct_path in ["/vps", "/instances", "/servers"]:
+    # 6. 如果在 /projets 页面，优先寻找实例入口并绝对避免跳转到不存在的 404 路由
+    if "/projets" in current_url or "/projets" in page.url.lower():
+        log(f"[{email}] 当前已在 projets 项目页面，正在定位具体实例卡片...")
+        for p_sel in [
+            "a:has-text('Manage'):not([href*='order'])",
+            "a:has-text('Gérer'):not([href*='order'])",
+            "a:has-text('View'):not([href*='order'])",
+            "a:has-text('Détails')",
+            ".card a:not([href*='order']):not([href*='new'])",
+            "a[href*='/projet/']",
+            "a[href*='/server/']",
+            "a[href*='/vps/']",
+        ]:
             try:
-                log(f"[{email}] 尝试直接跳转路径: {BASE_URL}{direct_path} ...")
-                page.goto(f"{BASE_URL}{direct_path}", timeout=15000)
-                time.sleep(3)
-                if is_on_server_detail_page(page):
-                    break
-                for sel in candidate_selectors:
-                    loc = page.locator(sel).first
-                    if loc.is_visible(timeout=1500):
-                        log(f"[{email}] 路径页面点击实例入口: {sel}")
-                        loc.click(timeout=5000)
-                        time.sleep(3)
-                        break
-                if is_on_server_detail_page(page):
+                loc = page.locator(p_sel).first
+                if loc.count() > 0 and loc.is_visible(timeout=1500):
+                    log(f"[{email}] 点击 projets 实例卡片: {p_sel}")
+                    loc.click(timeout=5000)
+                    time.sleep(3)
+                    clicked = True
                     break
             except Exception:
                 continue
+
+    # 若误入 404 页面，立即返回 /projets
+    if "not found" in page.evaluate("() => document.body ? document.body.innerText.toLowerCase() : ''"):
+        log(f"[{email}] 检测到 404 页面，安全返回主项目页面 /projets ...", "WARN")
+        try:
+            page.goto(f"{BASE_URL}/projets", timeout=15000)
+            time.sleep(3)
+        except Exception:
+            pass
+
 
     # 7. 检查次级跳转按钮 (如 "Manage VPS")
     for sub_sel in [
