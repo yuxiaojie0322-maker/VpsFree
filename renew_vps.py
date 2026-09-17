@@ -212,6 +212,13 @@ def navigate_to_server_page(page, email):
     current_url = page.url.lower()
     log(f"[{email}] 正在定位实例管理页面，当前 URL: {current_url}")
 
+    # 等待页面 DOM 与异步数据加载完成
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=5000)
+    except Exception:
+        pass
+    time.sleep(2)
+
     # 1. 检查是否在 Order 页面（无实例或被强制引导订购）
     if "/order" in current_url or "commande" in current_url:
         log(f"[{email}] ⚠️ 当前在 Order 页面（可能无有效实例）", "WARN")
@@ -238,35 +245,26 @@ def navigate_to_server_page(page, email):
         log(f"[{email}] ✅ 已在实例详情页: {page.url}")
         return "ok"
 
-    # 3. 候选实例入口选择器（支持多语言，排除下单/注销/新建链接）
+    # 3. 候选实例入口选择器（优先命中精准的 Manage 与 Gérer 链接）
     candidate_selectors = [
-        # 精准文本按钮/链接
+        "a:has-text('Manage'):not([href*='order']):not([href*='new']):not([href*='create'])",
+        "a:has-text('Gérer'):not([href*='order']):not([href*='new']):not([href*='create'])",
         "a:has-text('Manage VPS'):not([href*='order']):not([href*='new'])",
         "a:has-text('Gérer le VPS'):not([href*='order']):not([href*='new'])",
-        "button:has-text('Manage VPS'):not(:has-text('New'))",
-        "button:has-text('Gérer le VPS')",
+        "button:has-text('Manage'):not(:has-text('New'))",
+        "button:has-text('Gérer')",
         "table a:has-text('Manage'):not([href*='order']):not([href*='new'])",
         "table a:has-text('Gérer'):not([href*='order']):not([href*='new'])",
-        "table button:has-text('Manage')",
-        "table button:has-text('Gérer')",
-        "a[href*='/instance/']:has-text('Manage')",
-        "a[href*='/vps/']:has-text('Manage')",
-        "a[href*='/server/']:has-text('Manage')",
-        "a[href*='/manage']:not([href*='order']):not([href*='new']):not([href*='create'])",
-        # 针对具体实例路径的链接
+        "a[href*='/projet/']:not([href*='order']):not([href*='new']):not([href*='create'])",
+        "a[href*='/serveur/']:not([href*='order']):not([href*='new']):not([href*='create'])",
         "a[href*='/instance/']:not([href*='order']):not([href*='new']):not([href*='create']):not([href*='delete'])",
         "a[href*='/vps/']:not([href*='order']):not([href*='new']):not([href*='create']):not([href*='delete'])",
         "a[href*='/server/']:not([href*='order']):not([href*='new']):not([href*='create']):not([href*='delete'])",
         "a[href*='/vm/']:not([href*='order']):not([href*='new']):not([href*='create']):not([href*='delete'])",
-        # 常见操作按钮文本
-        "a:has-text('Manage'):not([href*='order']):not([href*='new']):not([href*='create'])",
-        "a:has-text('Gérer'):not([href*='order']):not([href*='new']):not([href*='create'])",
-        "a:has-text('Gestionar'):not([href*='order']):not([href*='new']):not([href*='create'])",
         "a:has-text('View Details'):not([href*='order'])",
         "a:has-text('Détails'):not([href*='order'])",
         "a:has-text('Console'):not([href*='order'])",
-        # 卡片中的主按钮
-        ".card a.btn:not([href*='order']):not([href*='new'])",
+        ".card a:not([href*='order']):not([href*='new'])",
         ".server-card a:not([href*='order']):not([href*='new'])",
     ]
 
@@ -275,7 +273,7 @@ def navigate_to_server_page(page, email):
     for sel in candidate_selectors:
         try:
             loc = page.locator(sel).first
-            if loc.is_visible(timeout=1500):
+            if loc.count() > 0 and loc.is_visible(timeout=2500):
                 log(f"[{email}] 发现实例入口，点击: {sel}")
                 loc.click(timeout=5000)
                 time.sleep(3)
@@ -283,6 +281,7 @@ def navigate_to_server_page(page, email):
                 break
         except Exception:
             continue
+
 
     # 4. 如果页面有数据表格 table，且上述没有命中，点击第一行中的主要链接
     if not clicked:
@@ -397,8 +396,8 @@ def navigate_to_server_page(page, email):
             pass
 
     final_url = page.url.lower()
-    if is_on_server_detail_page(page):
-        log(f"[{email}] ✅ 成功到达实例管理详情页: {final_url}")
+    if is_on_server_detail_page(page) or "/projets" in final_url:
+        log(f"[{email}] ✅ 成功到达实例管理页面: {final_url}")
         return "ok"
     elif "/order" in final_url or "commande" in final_url:
         log(f"[{email}] ⚠️ 最终停留在 Order 页面", "WARN")
