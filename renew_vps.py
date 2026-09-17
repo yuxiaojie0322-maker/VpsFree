@@ -205,16 +205,18 @@ def is_on_server_detail_page(page):
 
 
 def handle_confirm_modal(page, email):
-    """处理续期提交后的各类确认弹窗"""
+    """处理续期提交后的各类确认弹窗（包含 SweetAlert 成功弹窗）"""
     time.sleep(1.5)
     for confirm_selector in [
+        ".swal2-confirm",
+        "button.swal2-confirm",
+        "button:has-text('OK')",
         "button:has-text('Confirm')",
         "button:has-text('Confirmer')",
         "button:has-text('Confirmar')",
         "button:has-text('Yes')",
         "button:has-text('Oui')",
         "button:has-text('Valider')",
-        "button:has-text('OK')",
         ".modal button.btn-primary",
         ".modal button.btn-success",
         "button.btn-success",
@@ -224,8 +226,8 @@ def handle_confirm_modal(page, email):
             c_btn = page.locator(confirm_selector).first
             if c_btn.count() > 0 and c_btn.is_visible(timeout=2000):
                 c_btn.click(timeout=5000)
-                log(f"[{email}] 弹窗二次确认按钮点击成功: {confirm_selector} ✅")
-                time.sleep(2)
+                log(f"[{email}] 弹窗确认按钮点击成功: {confirm_selector} ✅")
+                time.sleep(1.5)
                 return True
         except Exception:
             pass
@@ -413,9 +415,22 @@ def navigate_to_instance_page(browser, page, email):
                     r_btn.scroll_into_view_if_needed()
                     time.sleep(0.5)
                     r_btn.click(timeout=6000)
+                    time.sleep(2)
+                    # 检查弹窗中返回的新到期时间
+                    swal_txt = page.evaluate("() => document.querySelector('.swal2-popup, .modal') ? document.querySelector('.swal2-popup, .modal').innerText : ''")
+                    m_new = re.search(r"New expiry\s*[:：]?\s*([^\n\r<]+)", swal_txt, re.I)
+                    if m_new:
+                        cached_meta["expires"] = m_new.group(1).strip()
+                        cached_meta["countdown"] = "已成功续期 7 天"
+                        log(f"[{email}] 🎉 续期成功弹窗提取到新到期时间: {cached_meta['expires']}")
                     handle_confirm_modal(page, email)
                     renew_status = "renewed"
-                    time.sleep(3)
+                    time.sleep(2)
+                    # 清理遮罩层，确保 Manage VPS 可点击
+                    try:
+                        page.evaluate("() => document.querySelectorAll('.modal, .swal2-container, .modal-backdrop').forEach(e => e.remove())")
+                    except Exception:
+                        pass
                     break
                 else:
                     renew_status = "disabled"
