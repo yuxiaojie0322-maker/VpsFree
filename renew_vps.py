@@ -204,13 +204,80 @@ def is_on_server_detail_page(page):
         return False
 
 
+def perform_renewal_if_available(page, email):
+    """检测并点击页面上的 Renew 7 days 续期按钮（支持列表页与详情页）"""
+    log(f"[{email}] 正在检测可用续期按钮 (Renew 7 days)...")
+    for renew_selector in [
+        "a:has-text('Renew 7 days')",
+        "button:has-text('Renew 7 days')",
+        "a:has-text('Renew for 7 days')",
+        "button:has-text('Renew for 7 days')",
+        "a:has-text('Renouveler pour 7 jours')",
+        "button:has-text('Renouveler pour 7 jours')",
+        "a:has-text('Renew'):not([href*='order']):not([href*='new'])",
+        "button:has-text('Renew'):not(:has-text('New')):not(:has-text('Order'))",
+    ]:
+        try:
+            btns = page.locator(renew_selector)
+            for i in range(btns.count()):
+                btn = btns.nth(i)
+                if not btn.is_visible(timeout=1000):
+                    continue
+
+                disabled_attr = btn.get_attribute("disabled")
+                class_attr = (btn.get_attribute("class") or "").lower()
+                style_attr = (btn.get_attribute("style") or "").lower()
+
+                # 如果明确被禁用或者是灰色状态
+                if disabled_attr is not None or "disabled" in class_attr or "pointer-events: none" in style_attr:
+                    log(f"[{email}] 续期按钮存在但已被禁用 (disabled)，未到 24h 窗口")
+                    return "disabled"
+
+                log(f"[{email}] 🚀 发现高亮可用续期按钮: {renew_selector}，立即触发点击！")
+                btn.scroll_into_view_if_needed()
+                time.sleep(0.5)
+                btn.click(timeout=8000)
+                time.sleep(3)
+
+                # 处理弹窗二次确认
+                for confirm_selector in [
+                    "button:has-text('Confirm')",
+                    "button:has-text('Confirmer')",
+                    "button:has-text('Confirmar')",
+                    "button:has-text('Yes')",
+                    "button:has-text('Oui')",
+                    "button:has-text('Valider')",
+                    "button:has-text('OK')",
+                    ".modal button.btn-primary",
+                    "button.btn-success",
+                    "a:has-text('Confirm')",
+                ]:
+                    try:
+                        c_btn = page.locator(confirm_selector).first
+                        if c_btn.is_visible(timeout=2000):
+                            c_btn.click(timeout=5000)
+                            log(f"[{email}] 点击二次确认按钮: {confirm_selector} ✅")
+                            time.sleep(2)
+                            break
+                    except Exception:
+                        pass
+
+                log(f"[{email}] 🎉 续期请求提交完成！")
+                return "renewed"
+        except Exception as e:
+            log(f"[{email}] 续期按钮扫描异常: {e}", "DEBUG")
+
+    log(f"[{email}] 当前未发现可点击的续期按钮")
+    return "not_found"
+
+
 def navigate_to_server_page(page, email):
     """
-    智能多层级导航：无论着陆在主页、仪表盘、还是列表页，
-    均能自动定位并点进 VPS 实例的独立管理页面。
+    智能定位进入实例独立详情页（优先点击 Manage VPS 按钮）
     """
     current_url = page.url.lower()
     log(f"[{email}] 正在定位实例管理页面，当前 URL: {current_url}")
+
 
     # 等待页面 DOM 与异步数据加载完成
     try:
@@ -219,31 +286,40 @@ def navigate_to_server_page(page, email):
         pass
     time.sleep(2)
 
-    # 1. 检查是否在 Order 页面（无实例或被强制引导订购）
+    # 1. 优先检测并点击列表中的【Manage VPS】按钮进入实例详情页
+    for mv_sel in [
+        "a:has-text('Manage VPS'):not([href*='order'])",
+        "button:has-text('Manage VPS')",
+        "table a:has-text('Manage VPS')",
+        "table button:has-text('Manage VPS')",
+    ]:
+        try:
+            mv_btn = page.locator(mv_sel).first
+            if mv_btn.count() > 0 and mv_btn.is_visible(timeout=3000):
+                log(f"[{email}] 🎯 精准命中【Manage VPS】按钮，立即点击进入实例详情页...")
+                mv_btn.scroll_into_view_if_needed()
+                time.sleep(0.5)
+                mv_btn.click(timeout=5000)
+                time.sleep(3)
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=5000)
+                except Exception:
+                    pass
+                log(f"[{email}] ✅ 已成功通过 Manage VPS 进入实例详情页: {page.url}")
+                return "ok"
+        except Exception:
+            continue
+
+    # 2. 检查是否在 Order 页面（无实例或被强制引导订购）
     if "/order" in current_url or "commande" in current_url:
         log(f"[{email}] ⚠️ 当前在 Order 页面（可能无有效实例）", "WARN")
         return "order_page"
 
-    # 2. 检查当前是否已经是实例详情页
+    # 3. 检查当前是否已经是实例详情页
     if is_on_server_detail_page(page):
-        # 确认是否有次级管理按钮需要展开（例如 Manage VPS）
-        for sub_sel in [
-            "a:has-text('Manage VPS'):not([href*='order'])",
-            "a:has-text('Gérer le VPS')",
-            "button:has-text('Manage VPS')",
-            "button:has-text('Gérer le VPS')",
-        ]:
-            try:
-                sub_btn = page.locator(sub_sel).first
-                if sub_btn.is_visible(timeout=1500):
-                    log(f"[{email}] 点击次级管理按钮: {sub_sel}")
-                    sub_btn.click(timeout=3000)
-                    time.sleep(3)
-                    break
-            except Exception:
-                pass
         log(f"[{email}] ✅ 已在实例详情页: {page.url}")
         return "ok"
+
 
     # 3. 候选实例入口选择器（优先命中精准的 Manage 与 Gérer 链接）
     candidate_selectors = [
@@ -800,8 +876,19 @@ def process_single_account(p, email, password, acc_index, total_accs):
 
             time.sleep(3)
 
-            # 6. 智能导航进入实例独立详情页
+            # 6. 先在主列表页尝试执行续期（针对图2所示的列表页直显 Renew 7 days 场景）
+            renew_res = perform_renewal_if_available(page, email)
+
+            # 7. 点击【Manage VPS】进入实例独立详情页
             nav_result = navigate_to_server_page(page, email)
+
+            # 8. 若列表页未点击成功，在详情页中再次尝试检测续期
+            if renew_res != "renewed":
+                sub_renew = perform_renewal_if_available(page, email)
+                if sub_renew == "renewed":
+                    renew_res = "renewed"
+                elif renew_res == "not_found" and sub_renew == "disabled":
+                    renew_res = "disabled"
 
             if nav_result == "order_page":
                 action_result = "⛔ 账号在 Order 页面（已达项目上限或无运行中实例）"
@@ -821,7 +908,7 @@ def process_single_account(p, email, password, acc_index, total_accs):
                 log(f"[{email}] 账号处理完成（Order 状态）")
                 return True
 
-            # 7. 提取实例运行状态与到期时间（等待数据渲染并提取文本）
+            # 9. 提取实例运行状态与到期时间（等待数据渲染并提取文本）
             time.sleep(3)
             try:
                 body_text = page.evaluate("() => document.body ? document.body.innerText : ''")
@@ -841,6 +928,8 @@ def process_single_account(p, email, password, acc_index, total_accs):
             m_open = re.search(r"(?:Renewal opens in|Renouvellement disponible dans|Renouvellement ouvert dans|Renovación en)\s*[:：]?\s*([^\n\r]+)", body_text, re.I)
             if m_open:
                 renewal_countdown = f"Renewal opens in {m_open.group(1).strip()}"
+            elif "less than 24 hours" in body_text.lower() or "moins de 24 heures" in body_text.lower():
+                renewal_countdown = "剩余不足 24 小时（已开放续期）"
 
             # 多语言支持：运行时间
             uptime_str = "正常运行中"
@@ -860,70 +949,13 @@ def process_single_account(p, email, password, acc_index, total_accs):
             if m_disk:
                 disk_str = m_disk.group(1)
 
-            # 8. 自动检测并执行续期操作
-            action_result = "⏸ 暂未开放（仅到期前24小时内可点）"
-            try:
-                detail_url = page.url.lower()
-                if "/order" in detail_url or "commande" in detail_url:
-                    log(f"[{email}] ⚠️ 当前在 Order 页面，跳过续期")
-                else:
-                    for renew_selector in [
-                        "button:has-text('Renew for 7 days')",
-                        "a:has-text('Renew for 7 days')",
-                        "button:has-text('Renouveler pour 7 jours')",
-                        "a:has-text('Renouveler pour 7 jours')",
-                        "button:has-text('Renew'):not(:has-text('New')):not(:has-text('Order'))",
-                        "a:has-text('Renew'):not([href*='order']):not([href*='new'])",
-                        "button:has-text('Renouveler')",
-                        "a:has-text('Renouveler')",
-                        "button:has-text('Renovar')",
-                        "a:has-text('Renovar')",
-                        "button:has-text('Extend'):not(:has-text('New'))",
-                    ]:
-                        try:
-                            renew_btn = page.locator(renew_selector).first
-                            if renew_btn.is_visible(timeout=2000):
-                                is_disabled = renew_btn.get_attribute("disabled")
-                                if is_disabled is not None:
-                                    log(f"[{email}] 续期按钮存在但已被禁用（disabled），未到 24h 窗口")
-                                    action_result = "⏸ 按钮存在但被禁用（未到续期窗口）"
-                                    break
-                                log(f"[{email}] 发现可用续期按钮: {renew_selector}，正在点击...")
-                                renew_btn.click(timeout=10000)
-                                time.sleep(3)
+            if renew_res == "renewed":
+                action_result = "🎉 <b>成功完成 7 天续期！</b>"
+            elif renew_res == "disabled":
+                action_result = "⏸ 续期按钮存在但已被禁用（未到 24h 窗口期）"
+            else:
+                action_result = "⏸ 未到续期窗口（仅到期前24小时内开放）"
 
-                                # 点击弹窗二次确认按钮
-                                for confirm_selector in [
-                                    "button:has-text('Confirm')",
-                                    "button:has-text('Confirmer')",
-                                    "button:has-text('Confirmar')",
-                                    "button:has-text('Yes')",
-                                    "button:has-text('Oui')",
-                                    "button:has-text('Valider')",
-                                    "button:has-text('OK')",
-                                    ".modal button.btn-primary",
-                                    "button.btn-success",
-                                ]:
-                                    try:
-                                        confirm_btn = page.locator(confirm_selector).first
-                                        if confirm_btn.is_visible(timeout=2000):
-                                            confirm_btn.click(timeout=5000)
-                                            log(f"[{email}] 点击确认按钮: {confirm_selector}")
-                                            break
-                                    except Exception:
-                                        continue
-
-                                action_result = "🎉 <b>成功完成 7 天续期！</b>"
-                                log(f"[{email}] 续期完成 ✅")
-                                break
-                        except Exception:
-                            continue
-                    else:
-                        log(f"[{email}] 未找到续期按钮（未到 24h 窗口期）")
-                        action_result = "⏸ 未找到续期按钮（正常：未到 24h 窗口期）"
-            except Exception as e:
-                action_result = f"续期操作异常: {e}"
-                log(f"[{email}] 续期异常: {e}", "WARN")
 
             time.sleep(2)
             shot_path = f"instance_{acc_index}.png"
