@@ -286,53 +286,55 @@ def navigate_to_server_page(page, email):
         pass
     time.sleep(2)
 
-    # 1. 优先检测并点击列表中的【Manage VPS】按钮进入实例详情页
-    clicked_mv = False
-    for mv_sel in [
-        "a:has-text('Manage VPS')",
-        "button:has-text('Manage VPS')",
-        "table a:has-text('Manage VPS')",
-        "table button:has-text('Manage VPS')",
-        "a.btn:has-text('Manage VPS')",
-        ".table a:has-text('Manage VPS')",
-    ]:
-        try:
-            mv_btn = page.locator(mv_sel).first
-            if mv_btn.count() > 0 and mv_btn.is_visible(timeout=3000):
-                log(f"[{email}] 🎯 发现【Manage VPS】按钮 ({mv_sel})，执行点击...")
-                mv_btn.scroll_into_view_if_needed()
-                time.sleep(0.5)
-                mv_btn.click(force=True, timeout=5000)
-                clicked_mv = True
-                break
-        except Exception:
-            continue
+    # 1. 核心关键：检查页面是否存在 Manage VPS 按钮，优先直接通过 href 跳转进入
+    mv_info = page.evaluate("""() => {
+        const els = Array.from(document.querySelectorAll('a, button'));
+        for (const el of els) {
+            const txt = (el.innerText || el.textContent || '').trim();
+            if (txt.includes('Manage VPS')) {
+                el.removeAttribute('target');
+                const href = el.getAttribute('href');
+                return { found: true, href: href, tag: el.tagName };
+            }
+        }
+        return { found: false };
+    }""")
 
-    if not clicked_mv:
+    if mv_info and mv_info.get("found"):
+        href = mv_info.get("href")
+        log(f"[{email}] 🎯 发现【Manage VPS】按钮 (href={href})，立即进入详情页...")
+
+        if href and not href.startswith("#") and not href.startswith("javascript"):
+            try:
+                target_url = href if href.startswith("http") else f"{BASE_URL.rstrip('/')}/{href.lstrip('/')}"
+                log(f"[{email}] 🚀 URL 直达实例详情页: {target_url}")
+                page.goto(target_url, timeout=15000)
+                time.sleep(4)
+                log(f"[{email}] ✅ 已成功直达实例详情页: {page.url}")
+                return "ok"
+            except Exception as e:
+                log(f"[{email}] 直接跳转异常: {e}，改用点击触发", "WARN")
+
+        # 物理点击 + DOM 强制点击
         try:
-            res_mv = page.evaluate("""() => {
+            mv_btn = page.locator("a:has-text('Manage VPS'), button:has-text('Manage VPS')").first
+            mv_btn.scroll_into_view_if_needed()
+            time.sleep(0.5)
+            mv_btn.click(force=True, timeout=5000)
+        except Exception:
+            page.evaluate("""() => {
                 const els = Array.from(document.querySelectorAll('a, button'));
                 for (const el of els) {
                     if ((el.innerText || '').trim().includes('Manage VPS')) {
+                        el.removeAttribute('target');
                         el.click();
-                        return true;
+                        break;
                     }
                 }
-                return false;
             }""")
-            if res_mv:
-                log(f"[{email}] ⚡ DOM 强制点击 Manage VPS 成功")
-                clicked_mv = True
-        except Exception:
-            pass
 
-    if clicked_mv:
         time.sleep(4)
-        try:
-            page.wait_for_load_state("domcontentloaded", timeout=5000)
-        except Exception:
-            pass
-        log(f"[{email}] ✅ 已成功通过 Manage VPS 进入实例详情页: {page.url}")
+        log(f"[{email}] ✅ 已通过 Manage VPS 进入: {page.url}")
         return "ok"
 
     # 2. 检查是否在 Order 页面（无实例或被强制引导订购）
@@ -344,6 +346,7 @@ def navigate_to_server_page(page, email):
     if is_on_server_detail_page(page):
         log(f"[{email}] ✅ 已在实例详情页: {page.url}")
         return "ok"
+
 
 
 
@@ -943,13 +946,16 @@ def process_single_account(p, email, password, acc_index, total_accs):
                 log(f"[{email}] 提取 body 文本异常: {e}", "WARN")
                 body_text = ""
 
-            # 多语言支持：到期时间（精确提取 22/09/2026 12:44 等标准日期时间）
+            # 多语言支持：到期时间（跨越换行/空格精确提取标准日期）
             expires_str = "未获取到"
-            m_exp = re.search(r"Expires\s*[:：]?\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4}(?:\s+[0-9]{1,2}:[0-9]{2})?)", body_text, re.I)
+            m_exp = re.search(r"Expires[^\d\n\r]*(\d{1,2}/\d{1,2}/\d{4}(?:\s+\d{1,2}:\d{2})?)", body_text, re.I)
+            if not m_exp:
+                m_exp = re.search(r"(\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2})", body_text)
             if not m_exp:
                 m_exp = re.search(r"(?:Expires|Expiration|Expire le|Date d'expiration|Vence|Expira)\s*[:：]?\s*([0-9/:\-\s]{8,25})", body_text, re.I)
             if m_exp:
                 expires_str = m_exp.group(1).strip()
+
 
             # 多语言支持：续期倒计时
             renewal_countdown = "已开放"
