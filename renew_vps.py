@@ -120,7 +120,7 @@ def send_tg_text(text):
 
 
 def get_accounts():
-    """解析单账号或多账号列表"""
+    """解析单账号或多账号列表（增强容错与多格式清洗）"""
     accounts = []
     raw_multi = os.environ.get("VPS_ACCOUNTS", "").strip()
 
@@ -129,17 +129,31 @@ def get_accounts():
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
+
+            # 去除用户可能复制的前缀如 "账号1："、"账号1:"、"1." 等
+            line = re.sub(r"^(?:账号\s*\d+\s*[：:]\s*|\d+[\.、]\s*)", "", line)
+
+            parts = None
             if "----" in line:
                 parts = line.split("----", 1)
+            elif "密码" in line:
+                parts = line.split("密码", 1)
             elif ":" in line:
                 parts = line.split(":", 1)
+            elif "：" in line:
+                parts = line.split("：", 1)
             elif "," in line:
                 parts = line.split(",", 1)
+            elif "\t" in line:
+                parts = line.split("\t", 1)
             else:
                 parts = line.split(None, 1)
 
-            if len(parts) == 2:
-                accounts.append({"email": parts[0].strip(), "password": parts[1].strip()})
+            if parts and len(parts) == 2:
+                em = parts[0].strip()
+                pw = parts[1].strip()
+                if em and pw:
+                    accounts.append({"email": em, "password": pw})
 
     if not accounts:
         single_email = os.environ.get("VPS_EMAIL", "").strip()
@@ -148,6 +162,7 @@ def get_accounts():
             accounts.append({"email": single_email, "password": single_pwd})
 
     return accounts
+
 
 
 def is_on_server_detail_page(page):
@@ -630,79 +645,136 @@ def process_single_account(p, email, password, acc_index, total_accs):
             log(f"[{email}] ⏳ 验证码识别成功，缓冲等待 {wait_after_captcha} 秒确保 Token 彻底稳定写入...")
             time.sleep(wait_after_captcha)
 
-            # 5. 极速复核账号密码并确保填入（使用 JS evaluate，耗时 <10ms，彻底避免 Playwright locator 30s 阻塞）
+            # 5. 确保账号密码 100% 完整填入并触发 input/change 事件（防止因插件工作时输入框失焦重置）
             try:
                 page.evaluate("""({u, p}) => {
-                    const mail = document.querySelector("input[name='mail'], input[type='email'], input[name='email'], input[name='username'], #emailaddress");
-                    const pwd = document.querySelector("input[name='pwd'], input[type='password'], input[name='password'], #password");
-                    if (mail && (!mail.value || mail.value.trim() === '')) mail.value = u;
-                    if (pwd && (!pwd.value || pwd.value.trim() === '')) pwd.value = p;
+                    const mail = document.querySelector("input[name='mail'], input[type='email'], #emailaddress");
+                    const pwd = document.querySelector("input[name='pwd'], input[type='password'], #password");
+                    if (mail) {
+                        mail.value = u;
+                        mail.dispatchEvent(new Event('input', { bubbles: true }));
+                        mail.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                    if (pwd) {
+                        pwd.value = p;
+                        pwd.dispatchEvent(new Event('input', { bubbles: true }));
+                        pwd.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
                 }""", {"u": email, "p": password})
+                # 额外通过 Playwright 再次安全填充，确保前端框架捕获真实输入
+                page.locator("input[name='pwd'], input[type='password'], #password").first.fill(password)
+            except Exception as e:
+                log(f"[{email}] 密码二次填充告警: {e}", "WARN")
+
+            # 6. 优先使用 Playwright 原生物理点击紫色 Sign In 按钮（比纯 JS 点击更贴合真实用户）
+            submit_clicked = False
+            for selector in [
+                "button.btn-primary",
+                "button[type='submit']",
+                "button:has-text('Sign In')",
+                "button:has-text('Sign in')",
+            ]:
+                try:
+                    btn = page.locator(selector).first
+                    if btn.count() > 0 and btn.is_visible():
+                        btn.scroll_into_view_if_needed()
+                        time.sleep(0.3)
+                        btn.click(force=True, timeout=3000)
+                        log(f"[{email}] 🚀 点击【Sign In】按钮成功 (Playwright 原生点击) ✅")
+                        submit_clicked = True
+                        break
+                except Exception:
+                    continue
+
+            # 兜底：若未完成原生点击，使用 DOM 方法与回车
+            if not submit_clicked:
+                try:
+                    res = page.evaluate("""() => {
+                        const btns = Array.from(document.querySelectorAll("button, input[type='submit']"));
+                        for (const b of btns) {
+                            const txt = (b.innerText || b.value || '').trim().toLowerCase();
+                            if (txt.includes('sign in') || txt.includes('login') || txt.includes('connexion') || b.type === 'submit') {
+                                b.click();
+                                return { clicked: true, method: 'btn.click' };
+                            }
+                        }
+                        return { clicked: false };
+                    }""")
+                    if res and res.get("clicked"):
+                        submit_clicked = True
+                        log(f"[{email}] ⚡ DOM 点击 Sign In 成功 ✅")
+                except Exception:
+                    pass
+
+            time.sleep(0.5)
+            try:
+                page.keyboard.press("Enter")
             except Exception:
                 pass
 
-            # 6. 秒级触发提交表单（先通过 JS 触发 click/submit，再用 Playwright 兜底，防止 hCaptcha token 2分钟过期）
-            submit_clicked = False
-            try:
-                # 优先直接在网页 DOM 中触发按钮点击或 form.submit
-                res = page.evaluate("""() => {
-                    const btns = Array.from(document.querySelectorAll("button, input[type='submit']"));
-                    for (const b of btns) {
-                        const txt = (b.innerText || b.value || '').trim().toLowerCase();
-                        if (txt.includes('sign in') || txt.includes('login') || txt.includes('connexion') || txt.includes('se connecter') || b.type === 'submit') {
-                            b.click();
-                            return { clicked: true, method: 'btn.click', text: txt };
-                        }
-                    }
-                    const form = document.querySelector("form");
-                    if (form) {
-                        form.submit();
-                        return { clicked: true, method: 'form.submit' };
-                    }
-                    return { clicked: false };
-                }""")
-                if res and res.get("clicked"):
-                    submit_clicked = True
-                    log(f"[{email}] ⚡ 极速提交表单成功 ({res.get('method', 'dom')}) ✅")
-            except Exception as e:
-                log(f"[{email}] JS 提交异常: {e}", "WARN")
-
-            if not submit_clicked:
-                for selector in [
-                    "button[type='submit']",
-                    "button:has-text('Sign In')",
-                    "button:has-text('Sign in')",
-                    "button.btn-primary",
-                    "button:has-text('Login')",
-                    "form button",
-                ]:
-                    try:
-                        btn = page.locator(selector).first
-                        if btn.count() > 0:
-                            btn.click(force=True, timeout=2500)
-                            log(f"[{email}] 点击提交按钮: {selector}", "INFO")
-                            submit_clicked = True
-                            break
-                    except Exception:
-                        continue
-
-            if not submit_clicked:
-                log(f"[{email}] 模拟回车提交", "WARN")
-                try:
-                    page.keyboard.press("Enter")
-                except Exception as e:
-                    log(f"[{email}] 回车异常: {e}", "WARN")
-
-            # 动态等待离开登录页面（拉长至 60 秒，避免慢速网络/代理或后端验证耗时导致过早判定失败）
-            log(f"[{email}] 等待登录完成跳转（最长 60 秒）...")
+            # 7. 智能等待响应（实时检测：成功跳转 / 密码不存在错误 / 验证码重试）
+            log(f"[{email}] 等待登录完成跳转或响应...")
             login_redirected = False
-            for wait_sec in range(60):
+            credential_error = False
+
+            for wait_sec in range(35):
                 time.sleep(1)
                 cur_u = page.url.lower()
+
+                # 判定成功 1：离开登录页
                 if "connexion" not in cur_u and "login" not in cur_u:
                     login_redirected = True
                     log(f"[{email}] ✅ 已成功跳转离开登录页: {page.url}（耗时 {wait_sec + 1}s）")
                     break
+
+                # 判定成功 2：已渲染出控制台元素
+                dash_detected = page.evaluate("""() => {
+                    const txt = document.body ? document.body.innerText.toLowerCase() : '';
+                    return txt.includes('dashboard') || txt.includes('my servers') || txt.includes('mes serveurs') || txt.includes('logout') || txt.includes('déconnexion');
+                }""")
+                if dash_detected:
+                    login_redirected = True
+                    log(f"[{email}] ✅ 已检测到控制面板内容，登录成功！")
+                    break
+
+                # 判定失败：实时检查页面错误文字提示
+                err_text = page.evaluate("""() => {
+                    const body = document.body ? document.body.innerText : '';
+                    if (body.includes("This email/password pair does not exist")) {
+                        return "pair_not_exist";
+                    }
+                    if (body.includes("Complete the captcha")) {
+                        return "captcha_incomplete";
+                    }
+                    const invalids = Array.from(document.querySelectorAll('.invalid-feedback, .is-invalid, .alert-danger'));
+                    for (const el of invalids) {
+                        const t = (el.innerText || '').trim();
+                        if (t && !t.includes('Complete the captcha')) return t;
+                    }
+                    return null;
+                }""")
+
+                if err_text == "pair_not_exist":
+                    credential_error = True
+                    log(f"[{email}] ❌ 网站提示：【This email/password pair does not exist】（账号或密码错误）！", "ERROR")
+                    break
+                elif err_text == "captcha_incomplete":
+                    log(f"[{email}] ⚠️ 验证码未完成或校验过期，准备重试...", "WARN")
+                    break
+                elif err_text:
+                    log(f"[{email}] ⚠️ 登录页面提示: {err_text}", "WARN")
+
+            if credential_error:
+                # 账号密码不存在时，不再盲目重试该账号，立即保存截图并通知
+                shot_path = f"credential_error_{acc_index}.png"
+                try:
+                    page.screenshot(path=shot_path)
+                except Exception:
+                    pass
+                send_tg_message(f"❌ <b>VPSFree 账号密码错误</b>\n📧 账号: <code>{email}</code>\n⚠️ 提示: <code>This email/password pair does not exist</code>\n💡 说明: 该账号密码无法登录，请核对 Secrets 配置！")
+                log(f"[{email}] ⛔ 当前账号密码无效，跳过重试直接处理下一个账号。")
+                browser.close()
+                return False
 
             if not login_redirected:
                 log(f"[{email}] ❌ [第 {attempt} 次] 登录后仍停留在登录页: {page.url}。将在 {RETRY_DELAY} 秒后重新尝试...", "WARN")
@@ -712,6 +784,7 @@ def process_single_account(p, email, password, acc_index, total_accs):
                     pass
                 time.sleep(RETRY_DELAY)
                 continue
+
 
             time.sleep(3)
 
