@@ -287,28 +287,53 @@ def navigate_to_server_page(page, email):
     time.sleep(2)
 
     # 1. 优先检测并点击列表中的【Manage VPS】按钮进入实例详情页
+    clicked_mv = False
     for mv_sel in [
-        "a:has-text('Manage VPS'):not([href*='order'])",
+        "a:has-text('Manage VPS')",
         "button:has-text('Manage VPS')",
         "table a:has-text('Manage VPS')",
         "table button:has-text('Manage VPS')",
+        "a.btn:has-text('Manage VPS')",
+        ".table a:has-text('Manage VPS')",
     ]:
         try:
             mv_btn = page.locator(mv_sel).first
             if mv_btn.count() > 0 and mv_btn.is_visible(timeout=3000):
-                log(f"[{email}] 🎯 精准命中【Manage VPS】按钮，立即点击进入实例详情页...")
+                log(f"[{email}] 🎯 发现【Manage VPS】按钮 ({mv_sel})，执行点击...")
                 mv_btn.scroll_into_view_if_needed()
                 time.sleep(0.5)
-                mv_btn.click(timeout=5000)
-                time.sleep(3)
-                try:
-                    page.wait_for_load_state("domcontentloaded", timeout=5000)
-                except Exception:
-                    pass
-                log(f"[{email}] ✅ 已成功通过 Manage VPS 进入实例详情页: {page.url}")
-                return "ok"
+                mv_btn.click(force=True, timeout=5000)
+                clicked_mv = True
+                break
         except Exception:
             continue
+
+    if not clicked_mv:
+        try:
+            res_mv = page.evaluate("""() => {
+                const els = Array.from(document.querySelectorAll('a, button'));
+                for (const el of els) {
+                    if ((el.innerText || '').trim().includes('Manage VPS')) {
+                        el.click();
+                        return true;
+                    }
+                }
+                return false;
+            }""")
+            if res_mv:
+                log(f"[{email}] ⚡ DOM 强制点击 Manage VPS 成功")
+                clicked_mv = True
+        except Exception:
+            pass
+
+    if clicked_mv:
+        time.sleep(4)
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=5000)
+        except Exception:
+            pass
+        log(f"[{email}] ✅ 已成功通过 Manage VPS 进入实例详情页: {page.url}")
+        return "ok"
 
     # 2. 检查是否在 Order 页面（无实例或被强制引导订购）
     if "/order" in current_url or "commande" in current_url:
@@ -319,6 +344,7 @@ def navigate_to_server_page(page, email):
     if is_on_server_detail_page(page):
         log(f"[{email}] ✅ 已在实例详情页: {page.url}")
         return "ok"
+
 
 
     # 3. 候选实例入口选择器（优先命中精准的 Manage 与 Gérer 链接）
@@ -917,19 +943,32 @@ def process_single_account(p, email, password, acc_index, total_accs):
                 log(f"[{email}] 提取 body 文本异常: {e}", "WARN")
                 body_text = ""
 
-            # 多语言支持：到期时间
+            # 多语言支持：到期时间（精确提取 22/09/2026 12:44 等标准日期时间）
             expires_str = "未获取到"
-            m_exp = re.search(r"(?:Expires|Expiration|Expire le|Date d'expiration|Vence|Expira)\s*[:：]?\s*([^\n\r]+)", body_text, re.I)
+            m_exp = re.search(r"Expires\s*[:：]?\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4}(?:\s+[0-9]{1,2}:[0-9]{2})?)", body_text, re.I)
+            if not m_exp:
+                m_exp = re.search(r"(?:Expires|Expiration|Expire le|Date d'expiration|Vence|Expira)\s*[:：]?\s*([0-9/:\-\s]{8,25})", body_text, re.I)
             if m_exp:
                 expires_str = m_exp.group(1).strip()
 
             # 多语言支持：续期倒计时
             renewal_countdown = "已开放"
-            m_open = re.search(r"(?:Renewal opens in|Renouvellement disponible dans|Renouvellement ouvert dans|Renovación en)\s*[:：]?\s*([^\n\r]+)", body_text, re.I)
+            m_open = re.search(r"(?:Renewal opens in|Renouvellement disponible dans|Renouvellement ouvert dans|Renovación en)\s*[:：]?\s*([^\n\r<]+)", body_text, re.I)
             if m_open:
                 renewal_countdown = f"Renewal opens in {m_open.group(1).strip()}"
             elif "less than 24 hours" in body_text.lower() or "moins de 24 heures" in body_text.lower():
-                renewal_countdown = "剩余不足 24 小时（已开放续期）"
+                renewal_countdown = "剩余不足 24 小时（可续期）"
+
+            # 规格与 IP
+            spec_info = ""
+            m_spec = re.search(r"(\d+\s*vCPU[^\n\r<]+)", body_text, re.I)
+            if m_spec:
+                spec_info = m_spec.group(1).strip()
+            
+            ip_info = ""
+            m_ip = re.search(r"(?:IPv4\s*/\s*IPv6|IP)\s*[:：]?\s*([a-f0-9:.]+)", body_text, re.I)
+            if m_ip:
+                ip_info = m_ip.group(1).strip()
 
             # 多语言支持：运行时间
             uptime_str = "正常运行中"
@@ -949,6 +988,15 @@ def process_single_account(p, email, password, acc_index, total_accs):
             if m_disk:
                 disk_str = m_disk.group(1)
 
+            # 若未从图表获取到资源，且当前存在规格信息，展示规格说明
+            if cpu_str == "0.0%" and spec_info:
+                cpu_str = "1 核"
+            if mem_str == "0.0%" and "1 GB RAM" in spec_info:
+                mem_str = "1 GB"
+            if disk_str == "0.0%" and "10 GB SSD" in spec_info:
+                disk_str = "10 GB"
+
+
             if renew_res == "renewed":
                 action_result = "🎉 <b>成功完成 7 天续期！</b>"
             elif renew_res == "disabled":
@@ -967,7 +1015,8 @@ def process_single_account(p, email, password, acc_index, total_accs):
                 f"🖥 <b>VPSFree.es 实例运行报告 [{acc_index}/{total_accs}]</b>\n"
                 f"━━━━━━━━━━━━━━━━\n"
                 f"📧 <b>账号:</b> <code>{email}</code>\n"
-                f"🔢 <b>尝试次数:</b> 共尝试 {attempt} 次后成功\n"
+                f"🖥 <b>配置:</b> <code>{spec_info or '1 vCPU / 1 GB RAM / 10 GB SSD'}</code>\n"
+                f"🌐 <b>网络:</b> <code>{ip_info or '已绑定分配'}</code>\n"
                 f"📊 <b>资源:</b> CPU: {cpu_str} | 内存: {mem_str} | 硬盘: {disk_str}\n"
                 f"⏱ <b>运行:</b> {uptime_str}\n"
                 f"━━━━━━━━━━━━━━━━\n"
