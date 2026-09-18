@@ -38,6 +38,22 @@ jobs:
           curl -fLo nopecha.zip https://github.com/NopeCHALLC/nopecha-extension/releases/latest/download/chromium.zip
           unzip -q -o nopecha.zip -d scripts/extensions/nopecha/unpacked
           echo "插件准备就绪！"
+
+      - name: 从私有仓库拉取核心脚本
+        env:
+          CORE_SCRIPT_TOKEN: ${{ secrets.CORE_SCRIPT_TOKEN || secrets.GH_PAT_PRIVATE_REPO }}
+        run: |
+          echo "正在从私有仓库拉取 setup_proxy.py 与 renew_vps.py..."
+          curl -fL -H "Authorization: Bearer $CORE_SCRIPT_TOKEN" \
+               -H "Accept: application/vnd.github.raw" \
+               -o setup_proxy.py \
+               "https://api.github.com/repos/yuxiaojie0322-maker/my-private-scripts/contents/vpsfree/setup_proxy.py"
+          curl -fL -H "Authorization: Bearer $CORE_SCRIPT_TOKEN" \
+               -H "Accept: application/vnd.github.raw" \
+               -o renew_vps.py \
+               "https://api.github.com/repos/yuxiaojie0322-maker/my-private-scripts/contents/vpsfree/renew_vps.py"
+          echo "✅ 核心脚本拉取成功！"
+
       - name: 后台启动代理服务 (sing-box 动态解析 NODE_LINK)
         env:
           NODE_LINK: ${{ secrets.NODE_LINK }}

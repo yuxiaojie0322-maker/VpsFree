@@ -1,5 +1,7 @@
 # 🚀 VPSFree.es 自动续期脚本 (GitHub Actions 增强版)
 
+> ⚠️ 本仓库为公开工作流仓库，核心运行脚本托管于私人仓库 **[my-private-scripts (vpsfree 目录)](https://github.com/yuxiaojie0322-maker/my-private-scripts)**，在 GitHub Actions 运行阶段自动带鉴权拉取执行。
+
 基于 **GitHub Actions + Playwright + NopeCHA + Sing-box (Hysteria 2)** 的全自动 [VPSFree.es](https://free.vpsfree.es) 免费 VPS 续期与巡检工具。
 
 无需自己准备服务器或电脑开机，每日定时云端巡检、自动打码、精准捕捉 24 小时续期窗口，并将实例运行仪表盘与到期倒计时推送至 Telegram！
@@ -24,6 +26,7 @@
 
 | Secret 变量名 | 是否必填 | 说明 | 示例值 |
 | :--- | :--- | :--- | :--- |
+| `CORE_SCRIPT_TOKEN` | **必填** | 具备读取私有仓库 `my-private-scripts` 权限的 GitHub PAT | `ghp_xxxx` |
 | `VPS_ACCOUNTS` | **推荐** | **多账号配置**（一行一个，使用 `----` 分隔邮箱与密码） | 见下方多账号示例 |
 | `VPS_EMAIL` | 可选 | 单账号模式邮箱（若未填 `VPS_ACCOUNTS` 则使用此项） | `example@gmail.com` |
 | `VPS_PASSWORD` | 可选 | 单账号模式密码 | `YourPassword123` |
